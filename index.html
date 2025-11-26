@@ -67,9 +67,9 @@ function onDrag(e) {
 
   const p = e.touches ? e.touches[0] : e;
 
-  // FIXED: correct movement direction
-  yaw   += (p.clientX - prevX) * 0.2;
-  pitch += (p.clientY - prevY) * 0.2;
+  // Final correct movement
+  yaw   += (p.clientX - prevX) * 0.2;   // Left-right correct direction
+  pitch -= (p.clientY - prevY) * 0.2;   // Fix: Up moves up, Down moves down
 
   pitch = Math.max(-90, Math.min(90, pitch));
 
