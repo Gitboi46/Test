@@ -37,20 +37,16 @@ function init() {
   sphere = new THREE.Mesh(geometry, material);
   scene.add(sphere);
 
-  // Mouse events
   renderer.domElement.addEventListener("mousedown", startDrag);
   renderer.domElement.addEventListener("mousemove", onDrag);
   renderer.domElement.addEventListener("mouseup", endDrag);
 
-  // Touch events
   renderer.domElement.addEventListener("touchstart", startDrag, {passive:false});
   renderer.domElement.addEventListener("touchmove", onDrag, {passive:false});
   renderer.domElement.addEventListener("touchend", endDrag);
 
-  // Zoom wheel
   renderer.domElement.addEventListener("wheel", zoom);
 
-  // Resize
   window.addEventListener("resize", () => {
     camera.aspect = window.innerWidth/window.innerHeight;
     camera.updateProjectionMatrix();
@@ -70,8 +66,11 @@ function onDrag(e) {
   e.preventDefault();
 
   const p = e.touches ? e.touches[0] : e;
-  yaw   -= (p.clientX - prevX) * 0.2;
-  pitch -= (p.clientY - prevY) * 0.2;
+
+  // FIXED: correct movement direction
+  yaw   += (p.clientX - prevX) * 0.2;
+  pitch += (p.clientY - prevY) * 0.2;
+
   pitch = Math.max(-90, Math.min(90, pitch));
 
   prevX = p.clientX;
