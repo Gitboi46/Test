@@ -3,126 +3,258 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>360 Panorama Viewer</title>
+<title>360° Virtual Tour - Two-Way Navigation</title>
 <style>
   body, html { margin:0; height:100%; overflow:hidden; background:#000; }
   canvas { display:block; }
+  .hotspot {
+    position: absolute;
+    width: 100px;
+    height: 100px;
+    background: rgba(0, 200, 255, 0.95);
+    border-radius: 50%;
+    border: 6px solid white;
+    box-shadow: 0 0 40px rgba(0, 255, 255, 1), 0 0 20px rgba(255, 255, 255, 0.8);
+    cursor: pointer;
+    transform: translate(-50%, -50%);
+    pointer-events: auto;
+    transition: all 0.3s ease;
+    z-index: 10;
+    backdrop-filter: blur(4px);
+    font-family: Arial, sans-serif;
+    font-weight: bold;
+    font-size: 14px;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 10px;
+    box-sizing: border-box;
+    text-shadow: 0 0 10px black, 0 2px 4px rgba(0,0,0,0.8);
+    animation: pulse 2s ease-in-out infinite;
+  }
+  .hotspot:hover {
+    transform: translate(-50%, -50%) scale(1.3);
+    background: rgba(0, 255, 255, 1);
+    box-shadow: 0 0 60px rgba(0, 255, 255, 1), 0 0 30px rgba(255, 255, 255, 1);
+    animation: none;
+  }
+  @keyframes pulse {
+    0%, 100% { 
+      box-shadow: 0 0 40px rgba(0, 255, 255, 1), 0 0 20px rgba(255, 255, 255, 0.8);
+      transform: translate(-50%, -50%) scale(1);
+    }
+    50% { 
+      box-shadow: 0 0 60px rgba(0, 255, 255, 1), 0 0 30px rgba(255, 255, 255, 1);
+      transform: translate(-50%, -50%) scale(1.1);
+    }
+  }
+  #transitionOverlay {
+    position: absolute;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: radial-gradient(circle at center, transparent 30%, black 100%);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 20;
+    transition: opacity 0.4s ease;
+  }
 </style>
 </head>
 <body>
 
+<div id="hotspot1" class="hotspot" style="display:none;">Next Room</div>
+<div id="hotspot2" class="hotspot" style="display:none;">Go Back</div>
+<div id="transitionOverlay"></div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
-let scene, camera, renderer, sphere, isDragging=false;
-let prevX=0, prevY=0, yaw=0, pitch=0;
-let startDistance = 0;
+let scene, camera, renderer, sphere;
+let yaw = 0, pitch = 0, isDragging = false, isTransitioning = false;
+let prevX = 0, prevY = 0;
+
+const HOTSPOT_YAW = 0;    
+const HOTSPOT_PITCH = 0;      
+const HOTSPOT_DISTANCE = 4.5;
+
+const panoramaUrls = [
+  "https://raw.githubusercontent.com/Gitboi46/Test/main/hd.jpg",
+  "https://raw.githubusercontent.com/Gitboi46/Test/main/Panorama2_000.jpg"
+];
+
+let currentPanoIndex = 0;
+
+const hotspot1 = document.getElementById('hotspot1');
+const hotspot2 = document.getElementById('hotspot2');
+const overlay = document.getElementById('transitionOverlay');
 
 init();
 animate();
 
 function init() {
   scene = new THREE.Scene();
-
-  camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 1000);
+  camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
   camera.position.set(0, 0, 0);
 
-  renderer = new THREE.WebGLRenderer({ antialias:true });
+  renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(window.devicePixelRatio);
   document.body.appendChild(renderer.domElement);
 
-  const texture = new THREE.TextureLoader().load("https://raw.githubusercontent.com/Gitboi46/Test/main/hd.jpg");
+  loadPanorama(panoramaUrls[currentPanoIndex]);
 
-  const geometry = new THREE.SphereGeometry(500, 60, 40);
-  geometry.scale(-1, 1, 1);
-
-  const material = new THREE.MeshBasicMaterial({ map:texture });
-  sphere = new THREE.Mesh(geometry, material);
-  scene.add(sphere);
-
-  renderer.domElement.addEventListener("mousedown", startDrag);
+  renderer.domElement.addEventListener("mousedown", e => { if (e.button === 0) startDrag(e); });
   renderer.domElement.addEventListener("mousemove", onDrag);
   renderer.domElement.addEventListener("mouseup", endDrag);
-
-  renderer.domElement.addEventListener("touchstart", startTouch, {passive:false});
-  renderer.domElement.addEventListener("touchmove", onTouchMove, {passive:false});
+  renderer.domElement.addEventListener("wheel", onWheel, { passive: false });
+  renderer.domElement.addEventListener("touchstart", onTouchStart, { passive: false });
+  renderer.domElement.addEventListener("touchmove", onTouchMove, { passive: false });
   renderer.domElement.addEventListener("touchend", endDrag);
 
-  renderer.domElement.addEventListener("wheel", zoom);
+  hotspot1.addEventListener("click", () => goToPanorama(1));
+  hotspot2.addEventListener("click", () => goToPanorama(0));
 
-  window.addEventListener("resize", () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
+  window.addEventListener("resize", onWindowResize);
+}
+
+function loadPanorama(url) {
+  new THREE.TextureLoader().load(url, (texture) => {
+    texture.colorSpace = THREE.SRGBColorSpace;
+
+    if (!sphere) {
+      const geometry = new THREE.SphereGeometry(500, 60, 40);
+      geometry.scale(-1, 1, 1);
+      const material = new THREE.MeshBasicMaterial({ map: texture });
+      sphere = new THREE.Mesh(geometry, material);
+      scene.add(sphere);
+    } else {
+      sphere.material.map = texture;
+      sphere.material.needsUpdate = true;
+    }
+
+    hotspot1.style.display = currentPanoIndex === 0 ? "flex" : "none";
+    hotspot2.style.display = currentPanoIndex === 1 ? "flex" : "none";
   });
 }
 
+function goToPanorama(targetIndex) {
+  if (isTransitioning || currentPanoIndex === targetIndex) return;
+  isTransitioning = true;
+
+  const targetYaw = HOTSPOT_YAW;
+  const targetPitch = HOTSPOT_PITCH;
+
+  let progress = 0;
+  const duration = 1800;
+
+  const step = () => {
+    progress += 16;
+    const t = Math.min(progress / duration, 1);
+    const ease = 1 - Math.pow(1 - t, 3);
+
+    yaw += (targetYaw - yaw) * 0.1;
+    pitch += (targetPitch - pitch) * 0.1;
+
+    camera.position.z = -ease * 12;
+    camera.fov = 75 - ease * 45;
+    camera.updateProjectionMatrix();
+    overlay.style.opacity = ease * 0.95;
+
+    if (t < 1) {
+      requestAnimationFrame(step);
+    } else {
+      currentPanoIndex = targetIndex;
+      loadPanorama(panoramaUrls[currentPanoIndex]);
+
+      setTimeout(() => {
+        camera.position.set(0, 0, 0);
+        camera.fov = 75;
+        camera.updateProjectionMatrix();
+        overlay.style.opacity = 0;
+        yaw = 0; pitch = 0;
+        isTransitioning = false;
+      }, 300);
+    }
+  };
+  step();
+}
+
+function updateHotspotPosition() {
+  if (isTransitioning) return;
+
+  const phi = THREE.MathUtils.degToRad(90 - HOTSPOT_PITCH);
+  const theta = THREE.MathUtils.degToRad(HOTSPOT_YAW);
+
+  const x = HOTSPOT_DISTANCE * Math.sin(phi) * Math.cos(theta);
+  const y = HOTSPOT_DISTANCE * Math.cos(phi);
+  const z = HOTSPOT_DISTANCE * Math.sin(phi) * Math.sin(theta);
+
+  const hotspotPos = new THREE.Vector3(x, y, z);
+
+  const cameraDirection = new THREE.Vector3(0, 0, -1);
+  cameraDirection.applyQuaternion(camera.quaternion);
+  
+  const toHotspot = hotspotPos.clone().normalize();
+  const dotProduct = cameraDirection.dot(toHotspot);
+
+  const vector = hotspotPos.clone();
+  vector.project(camera);
+
+  const widthHalf = window.innerWidth / 2;
+  const heightHalf = window.innerHeight / 2;
+
+  const screenX = (vector.x * widthHalf) + widthHalf;
+  const screenY = -(vector.y * heightHalf) + heightHalf;
+
+  const activeHotspot = currentPanoIndex === 0 ? hotspot1 : hotspot2;
+
+  if (dotProduct > 0.1) {
+    activeHotspot.style.left = screenX + "px";
+    activeHotspot.style.top = screenY + "px";
+    activeHotspot.style.opacity = "1";
+    activeHotspot.style.pointerEvents = "auto";
+  } else {
+    activeHotspot.style.opacity = "0";
+    activeHotspot.style.pointerEvents = "none";
+  }
+}
+
 function startDrag(e) {
+  if (isTransitioning) return;
   isDragging = true;
-  prevX = e.clientX;
-  prevY = e.clientY;
+  prevX = e.clientX || e.touches[0].clientX;
+  prevY = e.clientY || e.touches[0].clientY;
 }
 
 function onDrag(e) {
-  if (!isDragging) return;
+  if (!isDragging || isTransitioning) return;
+  const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+  const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+  if (!clientX) return;
 
-  yaw   -= (e.clientX - prevX) * 0.2;
-  pitch -= (e.clientY - prevY) * 0.2;
+  yaw -= (clientX - prevX) * 0.25;
+  pitch -= (clientY - prevY) * 0.25;
+  pitch = Math.max(-89, Math.min(89, pitch));
 
-  pitch = Math.max(-90, Math.min(90, pitch));
-
-  prevX = e.clientX;
-  prevY = e.clientY;
+  prevX = clientX;
+  prevY = clientY;
 }
 
+function onTouchStart(e) { if (e.touches.length === 1) startDrag(e); }
+function onTouchMove(e) { e.preventDefault(); onDrag(e); }
 function endDrag() { isDragging = false; }
 
-function startTouch(e) {
-  if (e.touches.length === 1) {
-    isDragging = true;
-    prevX = e.touches[0].clientX;
-    prevY = e.touches[0].clientY;
-  } else if (e.touches.length === 2) {
-    startDistance = getTouchDistance(e);
-  }
-}
-
-function onTouchMove(e) {
+function onWheel(e) {
   e.preventDefault();
-
-  if (e.touches.length === 1 && isDragging) {
-    const p = e.touches[0];
-
-    yaw   -= (p.clientX - prevX) * 0.2;
-    pitch -= (p.clientY - prevY) * 0.2;
-
-    pitch = Math.max(-90, Math.min(90, pitch));
-
-    prevX = p.clientX;
-    prevY = p.clientY;
-  }
-
-  if (e.touches.length === 2) {
-    const newDist = getTouchDistance(e);
-    const zoomAmount = (startDistance - newDist) * 0.02;
-
-    camera.fov += zoomAmount;
-    camera.fov = Math.max(30, Math.min(100, camera.fov));
-    camera.updateProjectionMatrix();
-
-    startDistance = newDist;
-  }
-}
-
-function getTouchDistance(e) {
-  const dx = e.touches[0].clientX - e.touches[1].clientX;
-  const dy = e.touches[0].clientY - e.touches[1].clientY;
-  return Math.sqrt(dx * dx + dy * dy);
-}
-
-function zoom(e) {
-  camera.fov += e.deltaY * 0.01;
-  camera.fov = Math.max(30, Math.min(100, camera.fov));
+  if (isTransitioning) return;
+  camera.fov = Math.max(30, Math.min(110, camera.fov + e.deltaY * 0.05));
   camera.updateProjectionMatrix();
+}
+
+function onWindowResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
 function animate() {
@@ -132,6 +264,7 @@ function animate() {
   camera.rotation.y = THREE.MathUtils.degToRad(yaw);
   camera.rotation.x = THREE.MathUtils.degToRad(pitch);
 
+  updateHotspotPosition();
   renderer.render(scene, camera);
 }
 </script>
